@@ -31,6 +31,14 @@ SKELETON_TEMPLATE_LABELS = {
 }
 SKELETON_TEMPLATE_LABEL_CHOICES = list(SKELETON_TEMPLATE_LABELS.values())
 
+# glTF/trimesh meshes are Y-up; SkinTokens was trained on meshes imported through Blender
+# (Z-up), and the skeleton naming heuristic assumes Z-up too. Same mapping as Blender's
+# glTF importer: (x, y, z) -> (x, -z, y).
+Y_UP_TO_Z_UP = np.array(
+    [[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]],
+    dtype=np.float64,
+)
+
 MODEL_CACHE_LOCK = threading.Lock()
 MODEL_CACHE: dict[str, Any] = {"key": None, "model": None}
 
@@ -311,7 +319,9 @@ def _export_asset(asset: Any, output_path: Path, use_transfer: bool, group_per_v
         "group_per_vertex": group_per_vertex,
         "bottom_center_origin": bottom_center_origin,
         "smooth_angle": smooth_angle,
-        "export_yup": use_transfer,
+        # The generated asset is Z-up (see Y_UP_TO_Z_UP), like a Blender scene, so convert
+        # back to glTF Y-up on export in both the transfer and the direct export path.
+        "export_yup": True,
     }
 
     if backend == "bpy":
@@ -439,28 +449,13 @@ def _apply_postprocess(asset: Any) -> None:
     asset.normalize_skin()
 
 
-def _skeleton_config_names(name: str) -> list[str]:
-    from omegaconf import OmegaConf
-
-    config = OmegaConf.load(Path(__file__).with_name("vendor") / "configs" / "skeleton" / f"{name}.yaml")
-    return [str(bone) for part in config.parts_order for bone in config.parts[part]]
-
-
-def _rename_skeleton(asset: Any, skeleton_template: str, skeleton_type: str = "articulation") -> None:
+def _rename_skeleton(asset: Any, skeleton_template: str) -> None:
     from .vendor.skintokens.rig_package.skeleton_template import (
         apply_asset_joint_name_template,
         normalize_skeleton_template,
     )
 
     template_key = normalize_skeleton_template(skeleton_template)
-    if skeleton_type == "vroid" and asset.joint_names is not None:
-        # The model already named the bones (VRoid). The vroid/mixamo/ue5 configs list the same
-        # bones in the same order, so translate 1:1 instead of guessing from the bone layout.
-        if template_key != SKELETON_TEMPLATE_KEEP:
-            mapping = dict(zip(_skeleton_config_names("vroid"), _skeleton_config_names(template_key)))
-            asset.joint_names = [mapping.get(name, name) for name in asset.joint_names]
-        return
-
     asset.joint_names = apply_asset_joint_name_template(
         joint_names=asset.joint_names,
         joints=asset.joints,
@@ -487,7 +482,9 @@ def _run_skin_token(
     model_device = next(model.parameters()).device
     if source_path is None:
         source_path = _export_input_trimesh(mesh)
-    asset = _build_asset(mesh, source_path, skeleton_type)
+    z_up_mesh = mesh.copy()
+    z_up_mesh.apply_transform(Y_UP_TO_Z_UP)
+    asset = _build_asset(z_up_mesh, source_path, skeleton_type)
     batch = _prepare_batch(model, asset)
     batch["generate_kwargs"] = {
         "max_length": 2048,
@@ -509,7 +506,7 @@ def _run_skin_token(
         raise RuntimeError("SkinToken did not return a generated rig asset.")
 
     generated_asset = result.asset
-    _rename_skeleton(generated_asset, skeleton_template, skeleton_type)
+    _rename_skeleton(generated_asset, skeleton_template)
     if use_postprocess:
         _apply_postprocess(generated_asset)
     return generated_asset
@@ -570,8 +567,8 @@ class SkinTokenRigTrimesh:
                 "group_per_vertex": ("INT", {"default": 4, "min": 1, "max": 32}),
                 "bottom_center_origin": ("BOOLEAN", {"default": False}),
                 "smooth_angle": ("FLOAT", {"default": 55.0, "min": 0.0, "max": 180.0, "step": 1.0}),
-                "skeleton_type": (["articulation", "vroid"], {"default": "articulation", "tooltip": "Skeleton the model generates. articulation: any shape, generic bone_N names. vroid: humanoid skeleton named by the model itself (VRoid names)."}),
-                "skeleton_template": (SKELETON_TEMPLATE_LABEL_CHOICES, {"default": SKELETON_TEMPLATE_LABELS[SKELETON_TEMPLATE_KEEP], "tooltip": "Rename bones after rigging. With skeleton_type vroid this is an exact 1:1 translation; with articulation the names are guessed from the bone layout."}),
+                "skeleton_type": (["articulation", "vroid"], {"default": "articulation", "tooltip": "Skeleton type token the model is conditioned on. articulation: any shape. vroid: biased towards a VRoid-style humanoid skeleton. The model always outputs generic bone_N names."}),
+                "skeleton_template": (SKELETON_TEMPLATE_LABEL_CHOICES, {"default": SKELETON_TEMPLATE_LABELS[SKELETON_TEMPLATE_KEEP], "tooltip": "Rename the generated bones to a humanoid convention, inferred from the bone layout."}),
                 "top_k": ("INT", {"default": 5, "min": 1, "max": 200}),
                 "top_p": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 1.0, "step": 0.01}),
                 "temperature": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 2.0, "step": 0.1}),

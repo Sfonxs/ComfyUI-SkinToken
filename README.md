@@ -118,8 +118,8 @@ The main rigging node. Takes a native 3D file or a TRIMESH input and outputs a r
 | `group_per_vertex` | int | `4` | Max bone influences per vertex |
 | `bottom_center_origin` | bool | `False` | Set skeleton origin to bottom-center of mesh |
 | `smooth_angle` | float | `55.0` | Angle threshold for shade smooth |
-| `skeleton_type` | dropdown | `articulation` | Skeleton the model generates: `articulation` (any shape, generic `bone_N` names) or `vroid` (humanoid, named by the model) |
-| `skeleton_template` | dropdown | `Keep model names` | Bone naming convention. With `vroid` this is an exact 1:1 translation (VRoid → Mixamo/UE5); with `articulation` names are guessed from the bone layout |
+| `skeleton_type` | dropdown | `articulation` | Skeleton type token the model is conditioned on: `articulation` (any shape) or `vroid` (biased towards a VRoid-style humanoid). The model always outputs generic `bone_N` names |
+| `skeleton_template` | dropdown | `Keep model names` | Bone naming convention, inferred from the bone layout |
 | `top_k` | int | `5` | Top-K sampling for generation |
 | `top_p` | float | `0.95` | Nucleus sampling threshold |
 | `temperature` | float | `1.0` | Sampling temperature |
