@@ -104,6 +104,18 @@ The main rigging node. Takes a native 3D file or a TRIMESH input and outputs a r
 | `backend` | STRING | `bpy` or `blender_headless` |
 | `model_3d` | FILE_3D | The rigged model, for **Preview 3D** / **Save 3D** |
 
+### 📄 Path to 3D File
+
+Turns a file path string into a 3D file, so nodes that only output a path (e.g. `rigged_path`, or UniRig's `animated_fbx_path`) can feed **Preview 3D** / **Save 3D**. Accepts an absolute path or one relative to the ComfyUI output folder, and re-runs when the file on disk changes.
+
+| Input | Type | Description |
+|---|---|---|
+| `path` | STRING | Path to a glb/gltf/fbx/obj/... file |
+
+| Output | Type | Description |
+|---|---|---|
+| `model_3d` | FILE_3D | The file, for **Preview 3D** / **Save 3D** |
+
 ## Parameters
 
 | Parameter | Type | Default | Description |

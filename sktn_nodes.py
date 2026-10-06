@@ -642,12 +642,50 @@ class SkinTokenRigTrimesh:
         return (output_mesh, str(output_path), generated_asset, backend, Types.File3D(str(output_path)))
 
 
+def _resolve_3d_path(path: str) -> Path:
+    candidate = Path(path.strip().strip('"'))
+    if not candidate.is_absolute():
+        candidate = Path(folder_paths.get_output_directory()) / candidate
+    if not candidate.is_file():
+        raise FileNotFoundError(f"3D file not found: {candidate}")
+    return candidate
+
+
+class PathTo3DFile:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "path": ("STRING", {"default": "", "tooltip": "Path to a 3D file (glb/gltf/fbx/obj/...). Absolute, or relative to the ComfyUI output folder."}),
+            }
+        }
+
+    RETURN_TYPES = ("FILE_3D",)
+    RETURN_NAMES = ("model_3d",)
+    FUNCTION = "load"
+    CATEGORY = "3D/SkinToken"
+    DESCRIPTION = "Turns a file path string (e.g. from a node that only outputs a path) into a 3D file for Preview 3D / Save 3D."
+
+    @classmethod
+    def IS_CHANGED(cls, path: str):
+        # Re-run when the file on disk changes, not only when the path text changes.
+        try:
+            return _resolve_3d_path(path).stat().st_mtime
+        except FileNotFoundError:
+            return float("nan")
+
+    def load(self, path: str):
+        return (Types.File3D(str(_resolve_3d_path(path))),)
+
+
 NODE_CLASS_MAPPINGS = {
     "SkinTokenDownloadModels": SkinTokenDownloadModels,
     "SkinTokenRigTrimesh": SkinTokenRigTrimesh,
+    "SkinTokenPathTo3DFile": PathTo3DFile,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SkinTokenDownloadModels": "SkinToken Download Models",
     "SkinTokenRigTrimesh": "SkinToken Rig",
+    "SkinTokenPathTo3DFile": "Path to 3D File",
 }
