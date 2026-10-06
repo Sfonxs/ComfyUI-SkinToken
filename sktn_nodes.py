@@ -348,7 +348,7 @@ def _export_asset(asset: Any, output_path: Path, use_transfer: bool, group_per_v
     return backend
 
 
-def _build_asset(mesh: Trimesh.Trimesh, source_path: Path) -> Any:
+def _build_asset(mesh: Trimesh.Trimesh, source_path: Path, skeleton_type: str = "articulation") -> Any:
     from .vendor.skintokens.rig_package.info.asset import Asset
 
     vertices = np.asarray(mesh.vertices, dtype=np.float32)
@@ -368,7 +368,7 @@ def _build_asset(mesh: Trimesh.Trimesh, source_path: Path) -> Any:
         face_bias=np.array([faces.shape[0]], dtype=np.int32),
         mesh_names=["mesh_0"],
         matrix_world=np.eye(4, dtype=np.float32),
-        cls="articulation",
+        cls=skeleton_type,
         path=str(source_path),
     )
 
@@ -439,13 +439,28 @@ def _apply_postprocess(asset: Any) -> None:
     asset.normalize_skin()
 
 
-def _rename_skeleton(asset: Any, skeleton_template: str) -> None:
+def _skeleton_config_names(name: str) -> list[str]:
+    from omegaconf import OmegaConf
+
+    config = OmegaConf.load(Path(__file__).with_name("vendor") / "configs" / "skeleton" / f"{name}.yaml")
+    return [str(bone) for part in config.parts_order for bone in config.parts[part]]
+
+
+def _rename_skeleton(asset: Any, skeleton_template: str, skeleton_type: str = "articulation") -> None:
     from .vendor.skintokens.rig_package.skeleton_template import (
         apply_asset_joint_name_template,
         normalize_skeleton_template,
     )
 
     template_key = normalize_skeleton_template(skeleton_template)
+    if skeleton_type == "vroid" and asset.joint_names is not None:
+        # The model already named the bones (VRoid). The vroid/mixamo/ue5 configs list the same
+        # bones in the same order, so translate 1:1 instead of guessing from the bone layout.
+        if template_key != SKELETON_TEMPLATE_KEEP:
+            mapping = dict(zip(_skeleton_config_names("vroid"), _skeleton_config_names(template_key)))
+            asset.joint_names = [mapping.get(name, name) for name in asset.joint_names]
+        return
+
     asset.joint_names = apply_asset_joint_name_template(
         joint_names=asset.joint_names,
         joints=asset.joints,
@@ -466,12 +481,13 @@ def _run_skin_token(
     use_postprocess: bool,
     skeleton_template: str,
     source_path: Path | None = None,
+    skeleton_type: str = "articulation",
 ) -> Any:
     model = _load_model(ckpt_name, device_name)
     model_device = next(model.parameters()).device
     if source_path is None:
         source_path = _export_input_trimesh(mesh)
-    asset = _build_asset(mesh, source_path)
+    asset = _build_asset(mesh, source_path, skeleton_type)
     batch = _prepare_batch(model, asset)
     batch["generate_kwargs"] = {
         "max_length": 2048,
@@ -493,7 +509,7 @@ def _run_skin_token(
         raise RuntimeError("SkinToken did not return a generated rig asset.")
 
     generated_asset = result.asset
-    _rename_skeleton(generated_asset, skeleton_template)
+    _rename_skeleton(generated_asset, skeleton_template, skeleton_type)
     if use_postprocess:
         _apply_postprocess(generated_asset)
     return generated_asset
@@ -554,7 +570,8 @@ class SkinTokenRigTrimesh:
                 "group_per_vertex": ("INT", {"default": 4, "min": 1, "max": 32}),
                 "bottom_center_origin": ("BOOLEAN", {"default": False}),
                 "smooth_angle": ("FLOAT", {"default": 55.0, "min": 0.0, "max": 180.0, "step": 1.0}),
-                "skeleton_template": (SKELETON_TEMPLATE_LABEL_CHOICES, {"default": SKELETON_TEMPLATE_LABELS[SKELETON_TEMPLATE_KEEP]}),
+                "skeleton_type": (["articulation", "vroid"], {"default": "articulation", "tooltip": "Skeleton the model generates. articulation: any shape, generic bone_N names. vroid: humanoid skeleton named by the model itself (VRoid names)."}),
+                "skeleton_template": (SKELETON_TEMPLATE_LABEL_CHOICES, {"default": SKELETON_TEMPLATE_LABELS[SKELETON_TEMPLATE_KEEP], "tooltip": "Rename bones after rigging. With skeleton_type vroid this is an exact 1:1 translation; with articulation the names are guessed from the bone layout."}),
                 "top_k": ("INT", {"default": 5, "min": 1, "max": 200}),
                 "top_p": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 1.0, "step": 0.01}),
                 "temperature": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 2.0, "step": 0.1}),
@@ -581,6 +598,7 @@ class SkinTokenRigTrimesh:
         group_per_vertex: int,
         bottom_center_origin: bool,
         smooth_angle: float,
+        skeleton_type: str,
         skeleton_template: str,
         top_k: int,
         top_p: float,
@@ -611,6 +629,7 @@ class SkinTokenRigTrimesh:
             use_postprocess=use_postprocess,
             skeleton_template=skeleton_template,
             source_path=source_path,
+            skeleton_type=skeleton_type,
         )
 
         output_path = _make_output_path(filename_prefix, file_format, save_file)
