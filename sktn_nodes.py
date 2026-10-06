@@ -15,6 +15,7 @@ import folder_paths
 import numpy as np
 import torch
 import trimesh as Trimesh
+from comfy_api.latest import Types
 
 DEFAULT_TOKENRIG_CKPT = "experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt"
 DEFAULT_VAE_CKPT = "experiments/skin_vae_2_10_32768/last.ckpt"
@@ -212,6 +213,15 @@ def _export_input_trimesh(mesh: Trimesh.Trimesh) -> Path:
     source_path = temp_dir / "input_mesh.glb"
     mesh.export(source_path, file_type="glb")
     return source_path
+
+
+def _load_input_file3d(model_3d: Any) -> tuple[Trimesh.Trimesh, Path]:
+    # Native ComfyUI 3D file (Load 3D, Game Ready GLB, ...). Kept on disk as-is so
+    # use_transfer rigs the original file, not a trimesh re-export of it.
+    file_format = (model_3d.format or "glb").lower()
+    source_path = Path(model_3d.save_to(str(_make_temp_dir() / f"input_model.{file_format}")))
+    mesh = _as_single_trimesh(Trimesh.load(source_path, process=False, maintain_order=True))
+    return mesh, source_path
 
 
 def _load_output_trimesh(path: Path) -> Trimesh.Trimesh:
@@ -455,10 +465,12 @@ def _run_skin_token(
     num_beams: int,
     use_postprocess: bool,
     skeleton_template: str,
+    source_path: Path | None = None,
 ) -> Any:
     model = _load_model(ckpt_name, device_name)
     model_device = next(model.parameters()).device
-    source_path = _export_input_trimesh(mesh)
+    if source_path is None:
+        source_path = _export_input_trimesh(mesh)
     asset = _build_asset(mesh, source_path)
     batch = _prepare_batch(model, asset)
     batch["generate_kwargs"] = {
@@ -527,9 +539,12 @@ class SkinTokenRigTrimesh:
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {
+            "optional": {
+                "model_3d": ("FILE_3D_GLB,FILE_3D_GLTF,FILE_3D_FBX,FILE_3D_OBJ,FILE_3D", {"tooltip": "Native 3D file (Load 3D, Game Ready GLB, ...). Takes priority over trimesh."}),
                 "trimesh": ("TRIMESH",),
-                "ckpt_name": (_available_checkpoints(), {"default": DEFAULT_TOKENRIG_CKPT}),
+            },
+            "required": {
+                "ckpt_name":(_available_checkpoints(), {"default": DEFAULT_TOKENRIG_CKPT}),
                 "device": (["auto", "cuda"], {"default": "auto"}),
                 "save_file": ("BOOLEAN", {"default": True}),
                 "filename_prefix": ("STRING", {"default": "3D/SkinToken_"}),
@@ -548,15 +563,14 @@ class SkinTokenRigTrimesh:
             }
         }
 
-    RETURN_TYPES = ("TRIMESH", "STRING", "SKINTOKEN_ASSET", "STRING")
-    RETURN_NAMES = ("trimesh", "rigged_path", "asset", "backend")
+    RETURN_TYPES = ("TRIMESH", "STRING", "SKINTOKEN_ASSET", "STRING", "FILE_3D")
+    RETURN_NAMES = ("trimesh", "rigged_path", "asset", "backend", "model_3d")
     FUNCTION = "rig"
     CATEGORY = "3D/SkinToken"
-    DESCRIPTION = "Runs SkinTokens rigging on a TRIMESH input and exports the result through bpy or headless Blender."
+    DESCRIPTION = "Runs SkinTokens rigging on a native 3D file or TRIMESH input and exports the result through bpy or headless Blender."
 
     def rig(
         self,
-        trimesh: Any,
         ckpt_name: str,
         device: str,
         save_file: bool,
@@ -573,10 +587,18 @@ class SkinTokenRigTrimesh:
         temperature: float,
         repetition_penalty: float,
         num_beams: int,
+        model_3d: Any = None,
+        trimesh: Any = None,
     ):
+        if model_3d is not None:
+            mesh, source_path = _load_input_file3d(model_3d)
+        elif trimesh is not None:
+            mesh, source_path = _as_single_trimesh(trimesh), None
+        else:
+            raise ValueError("SkinToken Rig needs a model_3d or trimesh input.")
+
         _ensure_required_models(ckpt_name)
 
-        mesh = _as_single_trimesh(trimesh)
         generated_asset = _run_skin_token(
             mesh=mesh,
             ckpt_name=ckpt_name,
@@ -588,6 +610,7 @@ class SkinTokenRigTrimesh:
             num_beams=num_beams,
             use_postprocess=use_postprocess,
             skeleton_template=skeleton_template,
+            source_path=source_path,
         )
 
         output_path = _make_output_path(filename_prefix, file_format, save_file)
@@ -600,7 +623,7 @@ class SkinTokenRigTrimesh:
             smooth_angle=smooth_angle,
         )
         output_mesh = _load_output_trimesh(output_path)
-        return (output_mesh, str(output_path), generated_asset, backend)
+        return (output_mesh, str(output_path), generated_asset, backend, Types.File3D(str(output_path)))
 
 
 NODE_CLASS_MAPPINGS = {

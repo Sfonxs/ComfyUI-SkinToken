@@ -89,7 +89,12 @@ Downloads the required model checkpoints from HuggingFace into `ComfyUI/models/s
 
 ### 🦴 SkinToken Rig
 
-The main rigging node. Takes a TRIMESH input and outputs a rigged mesh.
+The main rigging node. Takes a native 3D file or a TRIMESH input and outputs a rigged mesh.
+
+| Input | Type | Description |
+|---|---|---|
+| `model_3d` | FILE_3D (GLB/GLTF/FBX/OBJ) | Optional. Native ComfyUI 3D file, e.g. from **Load 3D**. Takes priority over `trimesh`; with `use_transfer` the rig is transferred onto this original file |
+| `trimesh` | TRIMESH | Optional. Mesh from a TRIMESH loader |
 
 | Output | Type | Description |
 |---|---|---|
@@ -97,6 +102,7 @@ The main rigging node. Takes a TRIMESH input and outputs a rigged mesh.
 | `rigged_path` | STRING | File path to the exported model |
 | `asset` | SKINTOKEN_ASSET | Internal asset for chaining |
 | `backend` | STRING | `bpy` or `blender_headless` |
+| `model_3d` | FILE_3D | The rigged model, for **Preview 3D** / **Save 3D** |
 
 ## Parameters
 
